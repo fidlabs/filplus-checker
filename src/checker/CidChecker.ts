@@ -12,7 +12,8 @@ import {
   ProviderDistributionWithLocation,
   MinerInfo,
   IpInfoResponse,
-  GetVerifiedClientResponse
+  GetVerifiedClientResponse,
+  SparkSuccessRate
 } from './Types'
 import { generateGfmTable, escape, generateLink, wrapInCode } from './MarkdownUtils'
 import * as fs from 'fs'
@@ -141,8 +142,8 @@ export default class CidChecker {
     private readonly fileUploadConfig: FileUploadConfig,
     private readonly logger: Logger,
     private readonly ipinfoToken: string,
-    private readonly allocationBotId: number) {
-  }
+    private readonly allocationBotId: number
+  ) {}
 
   private getClientAddress (issue: Issue): string | undefined {
     const { address } = parseIssue(issue.body ?? '')
@@ -168,8 +169,10 @@ export default class CidChecker {
     for (let i = 1; i <= providers.length; i++) {
       params.push('$' + i.toString())
     }
-    const firstClientQuery = 'WITH mapping AS (SELECT DISTINCT ON (provider) provider, client FROM current_state WHERE verified_deal = true AND sector_start_epoch > 0 AND provider IN (' +
-      params.join(', ') + ') ORDER BY provider, sector_start_epoch ASC) SELECT provider, client_address FROM mapping, client_mapping WHERE mapping.client = client_mapping.client'
+    const firstClientQuery =
+      'WITH mapping AS (SELECT DISTINCT ON (provider) provider, client FROM current_state WHERE verified_deal = true AND sector_start_epoch > 0 AND provider IN (' +
+      params.join(', ') +
+      ') ORDER BY provider, sector_start_epoch ASC) SELECT provider, client_address FROM mapping, client_mapping WHERE mapping.client = client_mapping.client'
     this.logger.info({ firstClientQuery, providers })
     const queryResult = await retry(async () => await this.sql.query(firstClientQuery, providers), { retries: 3 })
     const rows: Array<{ provider: string, client_address: string }> = queryResult.rows
@@ -183,9 +186,7 @@ export default class CidChecker {
   private async getStorageProviderDistribution (clients: string[]): Promise<ProviderDistribution[]> {
     const currentEpoch = CidChecker.getCurrentEpoch()
     this.logger.info({ clients, currentEpoch }, 'Getting storage provider distribution')
-    const queryResult = await retry(async () => await this.sql.query(
-      CidChecker.ProviderDistributionQuery,
-      [clients, currentEpoch]), { retries: 3 })
+    const queryResult = await retry(async () => await this.sql.query(CidChecker.ProviderDistributionQuery, [clients, currentEpoch]), { retries: 3 })
     const distributions = queryResult.rows as ProviderDistribution[]
     const total = distributions.reduce((acc, cur) => acc + parseFloat(cur.total_deal_size), 0)
     for (const distribution of distributions) {
@@ -198,9 +199,7 @@ export default class CidChecker {
   private async getReplicationDistribution (clients: string[]): Promise<ReplicationDistribution[]> {
     const currentEpoch = CidChecker.getCurrentEpoch()
     this.logger.info({ clients, currentEpoch }, 'Getting replication distribution')
-    const queryResult = await retry(async () => await this.sql.query(
-      CidChecker.ReplicaDistributionQuery,
-      [clients, currentEpoch]), { retries: 3 })
+    const queryResult = await retry(async () => await this.sql.query(CidChecker.ReplicaDistributionQuery, [clients, currentEpoch]), { retries: 3 })
     const distributions = queryResult.rows as ReplicationDistribution[]
     const total = distributions.reduce((acc, cur) => acc + parseFloat(cur.total_deal_size), 0)
     for (const distribution of distributions) {
@@ -212,9 +211,9 @@ export default class CidChecker {
 
   private async getCidSharing (clients: string[]): Promise<CidSharing[]> {
     this.logger.info({ clients }, 'Getting cid sharing')
-    const queryResult = await retry(async () => await this.sql.query(
-      CidChecker.CidSharingQuery,
-      [clients]), { retries: 3 })
+    const queryResult = await retry(async () => await this.sql.query(CidChecker.CidSharingQuery, [clients]), {
+      retries: 3
+    })
     const sharing = queryResult.rows as CidSharing[]
     this.logger.debug({ sharing }, 'Got cid sharing')
     return sharing
@@ -237,12 +236,15 @@ export default class CidChecker {
       }
     }
 
-    this.logger.info({
-      owner: params.owner,
-      repo: params.repo,
-      path: params.path,
-      message: params.message
-    }, 'Uploading file')
+    this.logger.info(
+      {
+        owner: params.owner,
+        repo: params.repo,
+        path: params.path,
+        message: params.message
+      },
+      'Uploading file'
+    )
 
     if (local) {
       const base = dirname(path)
@@ -259,20 +261,26 @@ export default class CidChecker {
     }
 
     try {
-      const response: Response = await retry(async () => {
-        try {
-          return await this.octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', params)
-        } catch (e: any) {
-          this.logger.error('Error uploading file', e.toString())
-          throw e
-        }
-      }, { retries: 3 })
-      this.logger.info({
-        owner: params.owner,
-        repo: params.repo,
-        path: params.path,
-        message: params.message
-      }, 'Uploaded file')
+      const response: Response = await retry(
+        async () => {
+          try {
+            return await this.octokit.request('PUT /repos/{owner}/{repo}/contents/{path}', params)
+          } catch (e: any) {
+            this.logger.error('Error uploading file', e.toString())
+            throw e
+          }
+        },
+        { retries: 3 }
+      )
+      this.logger.info(
+        {
+          owner: params.owner,
+          repo: params.repo,
+          path: params.path,
+          message: params.message
+        },
+        'Uploaded file'
+      )
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
       return [response.data.content!.download_url!, response.data.content!.html_url!]
     } catch (error: any) {
@@ -288,13 +296,15 @@ export default class CidChecker {
       replicationEntries.push({
         yValue: parseFloat(distribution.unique_data_size),
         xValue: distribution.num_of_replicas,
-        barLabel: xbytes(parseFloat(distribution.unique_data_size), { iec: true }),
+        barLabel: xbytes(parseFloat(distribution.unique_data_size), {
+          iec: true
+        }),
         label: distribution.num_of_replicas.toString()
       })
     }
 
-    const backgroundColors = replicationEntries.map((row) => row.xValue <= colorThreshold ? RED : GREEN)
-    const borderColors = replicationEntries.map((row) => row.xValue <= colorThreshold ? RED : GREEN)
+    const backgroundColors = replicationEntries.map((row) => (row.xValue <= colorThreshold ? RED : GREEN))
+    const borderColors = replicationEntries.map((row) => (row.xValue <= colorThreshold ? RED : GREEN))
 
     // not sure why typescript is complaining here on labels
     // ive nested the Partial as well and its still complaining
@@ -304,7 +314,11 @@ export default class CidChecker {
       labels: {
         generateLabels: (_: Chart<'bar'>) => [
           { text: 'low provider count', fillStyle: RED, strokeStyle: '#fff' },
-          { text: 'healthy provider count', fillStyle: GREEN, strokeStyle: '#fff' }
+          {
+            text: 'healthy provider count',
+            fillStyle: GREEN,
+            strokeStyle: '#fff'
+          }
         ]
       }
     }
@@ -341,14 +355,15 @@ export default class CidChecker {
       return CidChecker.issueApplicationInfoCache.get(client)!
     }
     this.logger.info({ client }, 'Finding application info for client')
-    const response = await retry(async () => await axios.get(
-      `https://api.datacapstats.io/api/getVerifiedClients?limit=10&page=1&filter=${client}`), { retries: 6 })
+    const response = await retry(async () => await axios.get(`https://api.datacapstats.io/api/getVerifiedClients?limit=10&page=1&filter=${client}`), {
+      retries: 6
+    })
     const data: GetVerifiedClientResponse = response.data
     if (data.data.length === 0) {
       CidChecker.issueApplicationInfoCache.set(client, null)
       return null
     }
-    const primary = data.data.reduce((prev, curr) => parseInt(prev.initialAllowance) > parseInt(curr.initialAllowance) ? prev : curr)
+    const primary = data.data.reduce((prev, curr) => (parseInt(prev.initialAllowance) > parseInt(curr.initialAllowance) ? prev : curr))
     const result = {
       clientAddress: client,
       organizationName: (primary.name ?? '') + (primary.orgName ?? ''),
@@ -366,11 +381,7 @@ export default class CidChecker {
   }
 
   private static linkifyApplicationInfo (applicationInfo: ApplicationInfo | null): string {
-    return applicationInfo != null
-      ? (applicationInfo.url != null
-          ? `[${escape(applicationInfo.organizationName)}](${applicationInfo.url})`
-          : wrapInCode(applicationInfo.organizationName))
-      : 'Unknown'
+    return applicationInfo != null ? (applicationInfo.url != null ? `[${escape(applicationInfo.organizationName)}](${applicationInfo.url})` : wrapInCode(applicationInfo.organizationName)) : 'Unknown'
   }
 
   private async getNumberOfAllocations (issue: Issue, repo: Repository): Promise<number> {
@@ -398,17 +409,18 @@ export default class CidChecker {
 
   private async getMinerInfo (miner: string): Promise<MinerInfo> {
     this.logger.info({ miner }, 'Getting miner info')
-    return await retry(async () => {
-      const response = await axios.post('https://api.node.glif.io/rpc/v0', {
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'Filecoin.StateMinerInfo',
-        params: [
-          miner, null
-        ]
-      })
-      return response.data.result
-    }, { retries: 3 })
+    return await retry(
+      async () => {
+        const response = await axios.post('https://api.node.glif.io/rpc/v0', {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'Filecoin.StateMinerInfo',
+          params: [miner, null]
+        })
+        return response.data.result
+      },
+      { retries: 3 }
+    )
   }
 
   private static renderApprovers (approvers: Array<[string, number]>): string {
@@ -429,7 +441,9 @@ export default class CidChecker {
       pull_number: prNumber
     }
     this.logger.info(params, 'Getting PR')
-    const response: any | null = await retry(async () => await this.octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/files', params), { retries: 3 })
+    const response: any | null = await retry(async () => await this.octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}/files', params), {
+      retries: 3
+    })
     if (response == null) {
       throw new Error('Failed to get PR')
     }
@@ -503,17 +517,25 @@ export default class CidChecker {
     return ri
   }
 
-  private static readonly commentsCache = new Map<string, Array<{
+  private static readonly commentsCache = new Map<
+  string,
+  Array<{
     body?: string
     user: { login: string | undefined, id: number } | undefined | null
     performed_via_github_app?: { id: number } | undefined | null
-  }>>()
+  }>
+  >()
 
-  private async getComments (issueNumber: number, repo: Repository): Promise<Array<{
-    body?: string
-    user: { login: string | undefined, id: number } | undefined | null
-    performed_via_github_app?: { id: number } | undefined | null
-  }>> {
+  private async getComments (
+    issueNumber: number,
+    repo: Repository
+  ): Promise<
+    Array<{
+      body?: string
+      user: { login: string | undefined, id: number } | undefined | null
+      performed_via_github_app?: { id: number } | undefined | null
+    }>
+    > {
     const key = `${repo.owner.login}/${repo.name}/${issueNumber}`
     if (CidChecker.commentsCache.has(key)) {
       // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -532,16 +554,19 @@ export default class CidChecker {
         page
       }
       this.logger.info(params, 'Getting comments for issue')
-      const response: Response | null = await retry(async () => {
-        try {
-          return await this.octokit.request('GET /repos/{owner}/{repo}/issues/{issue_number}/comments', params)
-        } catch (e) {
-          if ((e as any).status === 404) {
-            return null
+      const response: Response | null = await retry(
+        async () => {
+          try {
+            return await this.octokit.request('GET /repos/{owner}/{repo}/issues/{issue_number}/comments', params)
+          } catch (e) {
+            if ((e as any).status === 404) {
+              return null
+            }
+            throw e
           }
-          throw e
-        }
-      }, { retries: 3 })
+        },
+        { retries: 3 }
+      )
       if (response != null) {
         comments.push(...response.data)
       }
@@ -559,8 +584,7 @@ export default class CidChecker {
     const approvers = new Map<string, number>()
     const comments = await this.getComments(issueNumber, repo)
     for (const comment of comments) {
-      if (comment.body?.startsWith('## Request Approved') === true ||
-        comment.body?.startsWith('## Request Proposed') === true) {
+      if (comment.body?.startsWith('## Request Approved') === true || comment.body?.startsWith('## Request Proposed') === true) {
         const approver = comment.user?.login ?? 'Unknown'
         const count = approvers.get(approver) ?? 0
         approvers.set(approver, count + 1)
@@ -587,10 +611,13 @@ export default class CidChecker {
     }
     for (const ip of ips) {
       this.logger.info({ ip }, 'Getting location for IP')
-      const data = await retry(async () => {
-        const response = await axios.get(`https://ipinfo.io/${ip}?token=${this.ipinfoToken}`)
-        return response.data
-      }, { retries: 3 }) as IpInfoResponse
+      const data = (await retry(
+        async () => {
+          const response = await axios.get(`https://ipinfo.io/${ip}?token=${this.ipinfoToken}`)
+          return response.data
+        },
+        { retries: 3 }
+      )) as IpInfoResponse
       if (data.bogon === true) {
         continue
       }
@@ -599,8 +626,8 @@ export default class CidChecker {
         city: data.city,
         country: data.country,
         region: data.region,
-        latitude: (data.loc != null) ? parseFloat(data.loc.split(',')[0]) : undefined,
-        longitude: (data.loc != null) ? parseFloat(data.loc.split(',')[1]) : undefined,
+        latitude: data.loc != null ? parseFloat(data.loc.split(',')[0]) : undefined,
+        longitude: data.loc != null ? parseFloat(data.loc.split(',')[1]) : undefined,
         orgName: data.org != null ? data.org.split(' ').slice(1).join(' ') : 'Unknown'
       }
     }
@@ -613,12 +640,18 @@ export default class CidChecker {
     return await this.check({ issue, repository: pr.repository }, criterias, otherAddress)
   }
 
-  public async check (event: { issue: Issue, repository: Repository }, criterias: Criteria[] = [{
-    maxProviderDealPercentage: 0.25,
-    maxDuplicationPercentage: 0.20,
-    maxPercentageForLowReplica: 0.25,
-    lowReplicaThreshold: 3
-  }], otherAddresses: string[] = []): Promise<[summary: string, content: string | undefined]> {
+  public async check (
+    event: { issue: Issue, repository: Repository },
+    criterias: Criteria[] = [
+      {
+        maxProviderDealPercentage: 0.25,
+        maxDuplicationPercentage: 0.2,
+        maxPercentageForLowReplica: 0.25,
+        lowReplicaThreshold: 3
+      }
+    ],
+    otherAddresses: string[] = []
+  ): Promise<[summary: string, content: string | undefined]> {
     const { issue, repository } = event
     let logger = this.logger.child({ issueNumber: issue.number })
     logger.info('Checking issue')
@@ -648,51 +681,59 @@ export default class CidChecker {
 
     // const shortIDs = await this.getClientShortIDs(addressGroup)
 
-    const [providerDistributions, replicationDistributions, cidSharing] =
-      await Promise.all([
-        (async () => {
-          const result = await this.getStorageProviderDistribution(addressGroup)
-          const providers = result.map(r => r.provider)
-          if (providers.length === 0) {
-            return []
-          }
-          const firstClientByProvider = await this.getFirstClientByProviders(providers)
-          const withLocations: ProviderDistributionWithLocation[] = []
-          for (const item of result) {
-            const location = await this.getLocation(item.provider)
-            const isNew = addressGroup.includes(firstClientByProvider.get(item.provider) ?? '')
-            withLocations.push({ ...item, ...location, new: isNew })
-          }
-          return withLocations.sort((a, b) => a.orgName?.localeCompare(b.orgName ?? '') ?? 0)
-        })(),
-        this.getReplicationDistribution(addressGroup),
-        this.getCidSharing(addressGroup)
-      ])
+    const [providerDistributions, replicationDistributions, cidSharing] = await Promise.all([
+      (async () => {
+        const result = await this.getStorageProviderDistribution(addressGroup)
+        const providers = result.map((r) => r.provider)
+        if (providers.length === 0) {
+          return []
+        }
+        const firstClientByProvider = await this.getFirstClientByProviders(providers)
+        const withLocations: ProviderDistributionWithLocation[] = []
+        for (const item of result) {
+          const location = await this.getLocation(item.provider)
+          const isNew = addressGroup.includes(firstClientByProvider.get(item.provider) ?? '')
+          withLocations.push({ ...item, ...location, new: isNew })
+        }
+        return withLocations.sort((a, b) => a.orgName?.localeCompare(b.orgName ?? '') ?? 0)
+      })(),
+      this.getReplicationDistribution(addressGroup),
+      this.getCidSharing(addressGroup)
+    ])
+
+    const retrievability = await this.providersRetrievability(providerDistributions)
 
     if (providerDistributions.length === 0) {
       return [CidChecker.getErrorContent('No active deals found for this client.'), undefined]
     }
 
-    const providerDistributionRows: ProviderDistributionRow[] = providerDistributions.map(distribution => {
-      const totalDealSize = xbytes(parseFloat(distribution.total_deal_size), { iec: true })
+    const providerDistributionRows: ProviderDistributionRow[] = providerDistributions.map((distribution) => {
+      const totalDealSize = xbytes(parseFloat(distribution.total_deal_size), {
+        iec: true
+      })
       const uniqueDataSize = xbytes(parseFloat(distribution.unique_data_size), { iec: true })
-      let location = [distribution.city, distribution.region, distribution.country].filter(x => x).join(', ')
+
+      let location = [distribution.city, distribution.region, distribution.country].filter((x) => x).join(', ')
       if (location === '' || location == null) {
         location = 'Unknown'
       }
       const orgName = distribution.orgName ?? 'Unknown'
+      const matchedretrievability = retrievability.find((item) => item.provider_id === distribution.provider)
       return {
         provider: generateLink(distribution.provider, `https://filfox.info/en/address/${distribution.provider}`) + (distribution.new ? '`new` ' : ''),
         totalDealSize,
         uniqueDataSize,
         location: location + '<br/>' + wrapInCode(orgName),
         percentage: `${(distribution.percentage * 100).toFixed(2)}%`,
-        duplicatePercentage: `${(distribution.duplication_percentage * 100).toFixed(2)}%`
+        duplicatePercentage: `${(distribution.duplication_percentage * 100).toFixed(2)}%`,
+        retrievability: matchedretrievability != null ? matchedretrievability.weightedAvarage.toString() : '-'
       }
     })
 
-    const replicationDistributionRows: ReplicationDistributionRow[] = replicationDistributions.map(distribution => {
-      const totalDealSize = xbytes(parseFloat(distribution.total_deal_size), { iec: true })
+    const replicationDistributionRows: ReplicationDistributionRow[] = replicationDistributions.map((distribution) => {
+      const totalDealSize = xbytes(parseFloat(distribution.total_deal_size), {
+        iec: true
+      })
       const uniqueDataSize = xbytes(parseFloat(distribution.unique_data_size), { iec: true })
       return {
         numOfReplica: distribution.num_of_replicas,
@@ -703,34 +744,38 @@ export default class CidChecker {
     })
 
     const cidSharingRows: CidSharingRow[] = await Promise.all(
-      cidSharing.map(
-        async (share) => {
-          const totalDealSize = xbytes(parseFloat(share.total_deal_size), { iec: true })
-          const otherApplication = await this.findApplicationInfoForClient(share.other_client_address)
-          return {
-            otherClientAddress: CidChecker.linkifyAddress(share.other_client_address),
-            totalDealSize,
-            uniqueCidCount: share.unique_cid_count.toLocaleString('en-US'),
-            otherClientOrganizationName: CidChecker.linkifyApplicationInfo(otherApplication),
-            verifier: otherApplication?.issueNumber == null
-              ? 'Unknown'
-              : CidChecker.renderApprovers(await this.getApprovers(parseInt(otherApplication.issueNumber), repository))
-          }
+      cidSharing.map(async (share) => {
+        const totalDealSize = xbytes(parseFloat(share.total_deal_size), {
+          iec: true
+        })
+        const otherApplication = await this.findApplicationInfoForClient(share.other_client_address)
+        return {
+          otherClientAddress: CidChecker.linkifyAddress(share.other_client_address),
+          totalDealSize,
+          uniqueCidCount: share.unique_cid_count.toLocaleString('en-US'),
+          otherClientOrganizationName: CidChecker.linkifyApplicationInfo(otherApplication),
+          verifier: otherApplication?.issueNumber == null ? 'Unknown' : CidChecker.renderApprovers(await this.getApprovers(parseInt(otherApplication.issueNumber), repository))
         }
-      )
+      })
     )
 
     const providerDistributionImage = this.getImageForProviderDistribution(providerDistributions)
     const replicationDistributionImage = this.getImageForReplicationDistribution(replicationDistributions, criteria.lowReplicaThreshold)
-    const providerDistributionImageUrl = (await this.uploadFile(
-      `${repository.full_name}/issues/${issue.number}/${Date.now()}.png`,
-      providerDistributionImage,
-      `Upload provider distribution image for issue #${issue.number} of ${repository.full_name}`))[0]
+    const providerDistributionImageUrl = (
+      await this.uploadFile(
+        `${repository.full_name}/issues/${issue.number}/${Date.now()}.png`,
+        providerDistributionImage,
+        `Upload provider distribution image for issue #${issue.number} of ${repository.full_name}`
+      )
+    )[0]
 
-    const replicationDistributionImageUrl = (await this.uploadFile(
-      `${repository.full_name}/issues/${issue.number}/${Date.now()}.png`,
-      replicationDistributionImage,
-      `Upload replication distribution image for issue #${issue.number} of ${repository.full_name}`))[0]
+    const replicationDistributionImageUrl = (
+      await this.uploadFile(
+        `${repository.full_name}/issues/${issue.number}/${Date.now()}.png`,
+        replicationDistributionImage,
+        `Upload replication distribution image for issue #${issue.number} of ${repository.full_name}`
+      )
+    )[0]
 
     const content: string[] = []
     const summary: string[] = []
@@ -785,10 +830,13 @@ export default class CidChecker {
         providerDistributionHealthy = false
       }
       if (provider.duplication_percentage > criteria.maxDuplicationPercentage) {
-        logger.info({
-          provider: provider.provider,
-          duplicationFactor: provider.duplication_percentage
-        }, 'Provider exceeds max duplication percentage')
+        logger.info(
+          {
+            provider: provider.provider,
+            duplicationFactor: provider.duplication_percentage
+          },
+          'Provider exceeds max duplication percentage'
+        )
         content.push(emoji.get('warning') + ` ${(provider.duplication_percentage * 100).toFixed(2)}% of total deal sealed by ${providerLink} are duplicate data.`)
         content.push('')
         providersExceedingMaxDuplication.push([provider.provider, provider.duplication_percentage])
@@ -803,21 +851,31 @@ export default class CidChecker {
       }
     }
     if (providersExceedingMaxPercentage.length > 0) {
-      summary.push(emoji.get('warning') + ` ${providersExceedingMaxPercentage.length} storage providers sealed more than ${(criteria.maxProviderDealPercentage * 100).toFixed(0)}% of total datacap - ` +
-        providersExceedingMaxPercentage.map(([provider, percentage]) => ` ${generateLink(provider, `https://filfox.info/en/address/${provider}`)}: ${(percentage * 100).toFixed(2)}%`).join(', '))
+      summary.push(
+        emoji.get('warning') +
+          ` ${providersExceedingMaxPercentage.length} storage providers sealed more than ${(criteria.maxProviderDealPercentage * 100).toFixed(0)}% of total datacap - ` +
+          providersExceedingMaxPercentage.map(([provider, percentage]) => ` ${generateLink(provider, `https://filfox.info/en/address/${provider}`)}: ${(percentage * 100).toFixed(2)}%`).join(', ')
+      )
       summary.push('')
     }
     if (providersExceedingMaxDuplication.length > 0) {
-      summary.push(emoji.get('warning') + ` ${providersExceedingMaxDuplication.length} storage providers sealed too much duplicate data - ` +
-        providersExceedingMaxDuplication.map(([provider, percentage]) => ` ${generateLink(provider, `https://filfox.info/en/address/${provider}`)}: ${(percentage * 100).toFixed(2)}%`).join(', '))
+      summary.push(
+        emoji.get('warning') +
+          ` ${providersExceedingMaxDuplication.length} storage providers sealed too much duplicate data - ` +
+          providersExceedingMaxDuplication.map(([provider, percentage]) => ` ${generateLink(provider, `https://filfox.info/en/address/${provider}`)}: ${(percentage * 100).toFixed(2)}%`).join(', ')
+      )
       summary.push('')
     }
     if (providersNoIp.length > 0) {
-      summary.push(emoji.get('warning') + ` ${providersNoIp.length} storage providers have unknown IP location - ` +
-        providersNoIp.map(provider => ` ${generateLink(provider, `https://filfox.info/en/address/${provider}`)}`).join(', '))
+      summary.push(
+        emoji.get('warning') +
+          ` ${providersNoIp.length} storage providers have unknown IP location - ` +
+          providersNoIp.map((provider) => ` ${generateLink(provider, `https://filfox.info/en/address/${provider}`)}`).join(', ')
+      )
       summary.push('')
     }
-    if (new Set(providerDistributionRows.map(row => row.location)).size <= 1) {
+
+    if (new Set(providerDistributionRows.map((row) => row.location)).size <= 1) {
       logger.info('Client has data stored in only one region')
       pushBoth(emoji.get('warning') + ' All storage providers are located in the same region.')
       pushBoth('')
@@ -829,15 +887,17 @@ export default class CidChecker {
       pushBoth('')
     }
 
-    content.push(generateGfmTable(providerDistributionRows,
-      [
+    content.push(
+      generateGfmTable(providerDistributionRows, [
         ['provider', { name: 'Provider', align: 'l' }],
         ['location', { name: 'Location', align: 'r' }],
         ['totalDealSize', { name: 'Total Deals Sealed', align: 'r' }],
         ['percentage', { name: 'Percentage', align: 'r' }],
         ['uniqueDataSize', { name: 'Unique Data', align: 'r' }],
-        ['duplicatePercentage', { name: 'Duplicate Deals', align: 'r' }]
-      ]))
+        ['duplicatePercentage', { name: 'Duplicate Deals', align: 'r' }],
+        ['retrievability', { name: 'retrievability', align: 'r' }]
+      ])
+    )
     pushBoth('')
     content.push(`<img src="${providerDistributionImageUrl}"/>`)
     content.push('')
@@ -854,8 +914,8 @@ export default class CidChecker {
     }
     content.push('')
     const lowReplicaPercentage = replicationDistributions
-      .filter(distribution => distribution.num_of_replicas <= criteria.lowReplicaThreshold)
-      .map(distribution => distribution.percentage)
+      .filter((distribution) => distribution.num_of_replicas <= criteria.lowReplicaThreshold)
+      .map((distribution) => distribution.percentage)
       .reduce((a, b) => a + b, 0)
     if (lowReplicaPercentage > criteria.maxPercentageForLowReplica) {
       logger.info({ lowReplicaPercentage }, 'Low replica percentage exceeds max percentage')
@@ -865,12 +925,14 @@ export default class CidChecker {
       pushBoth(emoji.get('heavy_check_mark') + ' Data replication looks healthy.')
       pushBoth('')
     }
-    content.push(generateGfmTable(replicationDistributionRows, [
-      ['uniqueDataSize', { name: 'Unique Data Size', align: 'r' }],
-      ['totalDealSize', { name: 'Total Deals Made', align: 'r' }],
-      ['numOfReplica', { name: 'Number of Providers', align: 'r' }],
-      ['percentage', { name: 'Deal Percentage', align: 'r' }]
-    ]))
+    content.push(
+      generateGfmTable(replicationDistributionRows, [
+        ['uniqueDataSize', { name: 'Unique Data Size', align: 'r' }],
+        ['totalDealSize', { name: 'Total Deals Made', align: 'r' }],
+        ['numOfReplica', { name: 'Number of Providers', align: 'r' }],
+        ['percentage', { name: 'Deal Percentage', align: 'r' }]
+      ])
+    )
     content.push('')
 
     content.push(`<img src="${replicationDistributionImageUrl}"/>`)
@@ -888,13 +950,15 @@ export default class CidChecker {
       content.push(emoji.get('warning') + ' CID sharing has been observed.')
       summary.push(emoji.get('warning') + ' CID sharing has been observed. (Top 3)')
       pushBoth('')
-      content.push(generateGfmTable(cidSharingRows, [
-        ['otherClientAddress', { name: 'Other Client', align: 'l' }],
-        ['otherClientOrganizationName', { name: 'Application', align: 'l' }],
-        ['totalDealSize', { name: 'Total Deals Affected', align: 'r' }],
-        ['uniqueCidCount', { name: 'Unique CIDs', align: 'r' }],
-        ['verifier', { name: 'Approvers', align: 'l' }]
-      ]))
+      content.push(
+        generateGfmTable(cidSharingRows, [
+          ['otherClientAddress', { name: 'Other Client', align: 'l' }],
+          ['otherClientOrganizationName', { name: 'Application', align: 'l' }],
+          ['totalDealSize', { name: 'Total Deals Affected', align: 'r' }],
+          ['uniqueCidCount', { name: 'Unique CIDs', align: 'r' }],
+          ['verifier', { name: 'Approvers', align: 'l' }]
+        ])
+      )
       for (const row of cidSharingRows.slice(0, 3)) {
         summary.push(`- ${row.totalDealSize} - ${row.otherClientAddress} - ${row.otherClientOrganizationName}`)
       }
@@ -916,13 +980,58 @@ export default class CidChecker {
     return [summary.join('\n'), joinedContent]
   }
 
+  private async providersRetrievability (providerDistributions: ProviderDistributionWithLocation[]): Promise<Array<{ provider_id: string, weightedAvarage: number }>> {
+    try {
+      const fetchSuccessRate = async () => await axios.get('https://stats.filspark.com/miners/retrieval-success-rate/summary?from=2020-05-09&to=2024-05-09')
+      const sparkData: SparkSuccessRate[] = (await fetchSuccessRate()).data
+
+      const matchedProviderDistributions: Array<{
+        miner_id: string
+        success_rate: number
+        total_deal_size: number
+      }> = []
+
+      providerDistributions.forEach(({ provider, total_deal_size }) => {
+        const sparkItem = sparkData.find((x) => x.miner_id === provider)
+        if (sparkItem != null) {
+          matchedProviderDistributions.push({
+            ...sparkItem,
+            total_deal_size: parseInt(total_deal_size)
+          })
+        }
+      })
+
+      const retrievability: Array<{ provider_id: string, weightedAvarage: number }> = []
+
+      let totalDealSizeSum = 0
+      matchedProviderDistributions.forEach(({ total_deal_size }) => {
+        totalDealSizeSum += total_deal_size
+      })
+
+      matchedProviderDistributions.forEach(({ miner_id, success_rate, total_deal_size }) => {
+        const weightedSum = success_rate * total_deal_size
+        const weightedAverage = weightedSum / totalDealSizeSum
+        retrievability.push({
+          provider_id: miner_id,
+          weightedAvarage: weightedAverage
+        })
+      })
+
+      return retrievability
+    } catch (error) {
+      console.error('Failed to fetch data:', error)
+      return []
+    }
+  }
+
   private async uploadReport (joinedContent: string, event: { issue: Issue, repository: Repository }): Promise<string> {
     const { issue, repository } = event
     const logger = this.logger.child({ issueNumber: issue.number })
     const contentUrl = await this.uploadFile(
       `${repository.full_name}/issues/${issue.number}/${Date.now()}.md`,
       Buffer.from(joinedContent).toString('base64'),
-      `Upload report for issue #${issue.number} of ${repository.full_name}`)
+      `Upload report for issue #${issue.number} of ${repository.full_name}`
+    )
     logger.info({ contentUrl: contentUrl[1] }, 'Report content uploaded')
     return contentUrl[1]
   }
