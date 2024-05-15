@@ -3,11 +3,26 @@ import { ApplicationFunctionOptions } from 'probot/lib/types'
 import { Router, Request, Response } from 'express'
 import { IssueCommentCreatedEvent, PullRequestReviewCommentCreatedEvent } from '@octokit/webhooks-types'
 import { RestEndpointMethodTypes } from '@octokit/plugin-rest-endpoint-methods'
-import { getCidChecker } from './Dependency'
+import { getCidChecker, pool } from './Dependency'
 import { Criteria } from './checker/CidChecker'
 
 const handler: ApplicationFunction = (app: Probot, _options: ApplicationFunctionOptions): void => {
   if (_options.getRouter != null) {
+    const healthRoute: Router = _options.getRouter('/health')
+    healthRoute.get('/', async (_: Request, res: Response) => {
+      try {
+        let out = await pool.query('SELECT 1')
+        if (out.rowCount === 1) {
+          res.status(200).send('OK')
+          return
+        }
+      } catch(e) {
+        // pass through
+      }
+      res.status(500).send('Database error')
+      return
+    })
+
     const reportRoute: Router = _options.getRouter('/check')
 
     reportRoute.get('/', async (req: Request, res: Response) => {
