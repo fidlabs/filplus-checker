@@ -12,8 +12,9 @@ import {
   ProviderDistributionWithLocation,
   MinerInfo,
   IpInfoResponse,
-  GetVerifiedClientResponse
-} from './Types'
+  GetVerifiedClientResponse,
+  SparkSuccessRate,
+  Retrievability } from './Types'
 import { generateGfmTable, escape, generateLink, wrapInCode } from './MarkdownUtils'
 import * as fs from 'fs'
 import { dirname, join as pathJoin } from 'path'
@@ -32,6 +33,7 @@ import GeoMap, { GeoMapEntry } from '../charts/GeoMap'
 import { Chart, LegendOptions } from 'chart.js'
 import { parseIssue } from '../ldn-parser-functions/parseIssue'
 import { DatacapAllocation } from './application'
+import { isNotEmpty } from '../utils/typeGuards'
 
 const RED = 'rgba(255, 99, 132)'
 const GREEN = 'rgba(75, 192, 192)'
@@ -607,18 +609,27 @@ export default class CidChecker {
     return null
   }
 
-  public async checkFromPR (pr: PullRequestReviewCommentCreatedEvent, criterias: Criteria[], otherAddress: string[] = []): Promise<[summary: string, content: string | undefined]> {
+  public async checkFromPR (pr: PullRequestReviewCommentCreatedEvent, criterias: Criteria[], otherAddress: string[] = [], retrievabilityThreshold?: number,
+    retrievabilityRange?: number): Promise<[summary: string, content: string | undefined]> {
     const record = await this.getRecordByPR(pr.pull_request.id, pr.repository)
     const issue = await this.getIssueForRecord(record, pr.repository)
-    return await this.check({ issue, repository: pr.repository }, criterias, otherAddress)
+    return await this.check({ issue, repository: pr.repository }, criterias, otherAddress, retrievabilityThreshold, retrievabilityRange)
   }
 
-  public async check (event: { issue: Issue, repository: Repository }, criterias: Criteria[] = [{
-    maxProviderDealPercentage: 0.25,
-    maxDuplicationPercentage: 0.20,
-    maxPercentageForLowReplica: 0.25,
-    lowReplicaThreshold: 3
-  }], otherAddresses: string[] = []): Promise<[summary: string, content: string | undefined]> {
+  public async check (
+    event: { issue: Issue, repository: Repository },
+    criterias: Criteria[] = [
+      {
+        maxProviderDealPercentage: 0.25,
+        maxDuplicationPercentage: 0.20,
+        maxPercentageForLowReplica: 0.25,
+        lowReplicaThreshold: 3
+      }
+    ],
+    otherAddresses: string[] = [],
+    retrievabilityThreshold: number = 0.2,
+    retrievabilityRange: number = 7
+  ): Promise<[summary: string, content: string | undefined]> {
     const { issue, repository } = event
     let logger = this.logger.child({ issueNumber: issue.number })
     logger.info('Checking issue')
@@ -669,6 +680,8 @@ export default class CidChecker {
         this.getCidSharing(addressGroup)
       ])
 
+    const { retrievability, avgProviderScore } = await this.providersRetrievability(providerDistributions, retrievabilityRange)
+
     if (providerDistributions.length === 0) {
       return [CidChecker.getErrorContent('No active deals found for this client.'), undefined]
     }
@@ -681,13 +694,18 @@ export default class CidChecker {
         location = 'Unknown'
       }
       const orgName = distribution.orgName ?? 'Unknown'
+      const matchedRetrievability = retrievability.find((item) => item.provider_id === distribution.provider)
+      const retrievabilitySuccessRate =
+        matchedRetrievability != null ? (matchedRetrievability.success_rate * 100).toFixed(2) + '%' : '-'
+
       return {
         provider: generateLink(distribution.provider, `https://filfox.info/en/address/${distribution.provider}`) + (distribution.new ? '`new` ' : ''),
         totalDealSize,
         uniqueDataSize,
         location: location + '<br/>' + wrapInCode(orgName),
         percentage: `${(distribution.percentage * 100).toFixed(2)}%`,
-        duplicatePercentage: `${(distribution.duplication_percentage * 100).toFixed(2)}%`
+        duplicatePercentage: `${(distribution.duplication_percentage * 100).toFixed(2)}%`,
+        retrievability: retrievabilitySuccessRate
       }
     })
 
@@ -829,6 +847,21 @@ export default class CidChecker {
       pushBoth('')
     }
 
+    const countWarningRetrievability = retrievability.filter((item) => item.success_rate === 0).length
+    const WarningRetriveabilityPercentage = (countWarningRetrievability / retrievability.length) * 100
+    if (countWarningRetrievability > 0) {
+      pushBoth(
+        emoji.get('warning') +
+          ` ${WarningRetriveabilityPercentage.toFixed(2)}% of Storage Providers have retrieval success rate equal to zero.`
+      )
+      pushBoth('')
+    }
+
+    if (retrievability.length && avgProviderScore < retrievabilityThreshold) {
+      pushBoth(emoji.get('warning') + ` The average retrieval success rate is ${(avgProviderScore * 100).toFixed(2)}%`)
+      pushBoth('')
+    }
+
     content.push(generateGfmTable(providerDistributionRows,
       [
         ['provider', { name: 'Provider', align: 'l' }],
@@ -836,8 +869,10 @@ export default class CidChecker {
         ['totalDealSize', { name: 'Total Deals Sealed', align: 'r' }],
         ['percentage', { name: 'Percentage', align: 'r' }],
         ['uniqueDataSize', { name: 'Unique Data', align: 'r' }],
-        ['duplicatePercentage', { name: 'Duplicate Deals', align: 'r' }]
-      ]))
+        ['duplicatePercentage', { name: 'Duplicate Deals', align: 'r' }],
+        ['retrievability', { name: `Mean Spark Retrieval Success Rate ${retrievabilityRange}d`, align: 'r' }]
+      ])
+    )
     pushBoth('')
     content.push(`<img src="${providerDistributionImageUrl}"/>`)
     content.push('')
@@ -914,6 +949,69 @@ export default class CidChecker {
     summary.push('### Full report')
     summary.push(`Click ${generateLink('here', contentUrl)} to view the CID Checker report.`)
     return [summary.join('\n'), joinedContent]
+  }
+
+  private async providersRetrievability(
+    providerDistributions: ProviderDistributionWithLocation[],
+    retrievabilityRange: number
+  ): Promise<{ retrievability: Retrievability[], avgProviderScore: number }> {
+    try {
+      const from = new Date(Date.now() - retrievabilityRange * 24 * 3600 * 1000).toISOString().split('T')[0]
+      const to = new Date().toISOString().split('T')[0]
+
+      const sparkData = await this.fetchRetrievalSuccessRate(from, to)
+
+      const retrievability = this.createRetrievability(providerDistributions, sparkData)
+      if (retrievability.length === 0) return { retrievability: [], avgProviderScore: 0 }
+
+      const avgProviderScore = this.calculateAvgProviderScore(retrievability)
+
+      return { retrievability, avgProviderScore }
+    } catch (error) {
+      console.error('Failed to fetch retrievability data:', error)
+      return { retrievability: [], avgProviderScore: 0 }
+    }
+  }
+
+  private calculateAvgProviderScore (matchedRetrievability: Retrievability[]): number {
+    const { totalClientDealSize, totalSuccessRate } = matchedRetrievability.reduce(
+      (acc, { total_deal_size, success_rate }) => {
+        acc.totalClientDealSize += total_deal_size
+        acc.totalSuccessRate += success_rate * total_deal_size
+        return acc
+      },
+      { totalClientDealSize: 0, totalSuccessRate: 0 }
+    )
+
+    if (totalSuccessRate === 0 || totalClientDealSize === 0) return 0
+    return totalSuccessRate / totalClientDealSize
+  }
+
+  private createRetrievability (
+    providerDistributions: ProviderDistributionWithLocation[],
+    sparkData: SparkSuccessRate[]
+  ): Retrievability[] {
+    const retrievability = providerDistributions
+      .map(({ provider, total_deal_size }) => {
+        const sparkItem = sparkData.find((x) => x.miner_id === provider)
+
+        if (!sparkItem) return null
+
+        return {
+          provider_id: sparkItem.miner_id,
+          success_rate: sparkItem.success_rate,
+          total_deal_size: Number(total_deal_size)
+        }
+      }).filter(isNotEmpty)
+
+    return retrievability
+  }
+
+  private async fetchRetrievalSuccessRate (from: string, to: string): Promise<SparkSuccessRate[]> {
+    const response = await axios.get(`https://stats.filspark.com/miners/retrieval-success-rate/summary?from=${from}&to=${to}`)
+    const sparkData: SparkSuccessRate[] = response.data
+
+    return sparkData
   }
 
   private async uploadReport (joinedContent: string, event: { issue: Issue, repository: Repository }): Promise<string> {

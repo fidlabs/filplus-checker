@@ -6,6 +6,10 @@ import * as dotenv from 'dotenv'
 
 export async function manualTrigger (event: APIGatewayProxyEventV2, _: Context): Promise<APIGatewayProxyResult> {
   dotenv.config()
+
+  const retrievabilityWarningIndicator = parseFloat(process.env.RETRIEVABILITY_WARNING_THRESHOLD ?? '0.2')
+  const retrievabilityRange = parseInt(process.env.RETRIEVABILITY_RANGE_DAYS ?? '7')
+
   const issueId = event.queryStringParameters?.issueId
   const repo = event.queryStringParameters?.repo
   const otherAddresses: string[] = event.queryStringParameters?.otherAddresses?.split(' ') ?? []
@@ -62,7 +66,7 @@ export async function manualTrigger (event: APIGatewayProxyEventV2, _: Context):
     maxDuplicationPercentage: 0.20,
     maxPercentageForLowReplica: 0.25,
     lowReplicaThreshold: 3
-  }], otherAddresses)
+  }], otherAddresses, retrievabilityWarningIndicator, retrievabilityRange)
 
   return {
     statusCode: 200,

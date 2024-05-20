@@ -1,3 +1,14 @@
+export interface SparkSuccessRate {
+  miner_id: string
+  success_rate: number
+}
+
+export interface Retrievability {
+  provider_id: string
+  success_rate: number
+  total_deal_size: number
+}
+
 export interface ProviderDistribution {
   provider: string
   total_deal_size: string
@@ -39,6 +50,7 @@ export interface ProviderDistributionRow {
   duplicatePercentage: string
   percentage: string
   location: string
+  retrievability: string
 }
 
 export interface RetrievalRow {

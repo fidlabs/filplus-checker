@@ -31,7 +31,11 @@ const handler: ApplicationFunction = (app: Probot, _options: ApplicationFunction
         return
       }
 
+      const retrievabilityThreshold = parseFloat(process.env.RETRIEVABILITY_WARNING_THRESHOLD ?? '0.2')
+      const retrievabilityRange = parseInt(process.env.RETRIEVABILITY_RANGE_DAYS ?? '7')
+
       const criteria: Criteria[] = JSON.parse(process.env.CRITERIA ?? '[]')
+
       if (criteria.length === 0 || criteria.some(c =>
         c.lowReplicaThreshold === undefined ||
         c.maxDuplicationPercentage === undefined ||
@@ -69,7 +73,7 @@ const handler: ApplicationFunction = (app: Probot, _options: ApplicationFunction
           name: ownerSplit[1],
           full_name: req.query.repo
         }
-      } as any, criteria)
+      } as any, criteria, [], retrievabilityThreshold, retrievabilityRange)
       if (result === undefined) {
         app.log.info('No comment to post')
         return
@@ -98,6 +102,9 @@ const handler: ApplicationFunction = (app: Probot, _options: ApplicationFunction
       otherAddresses.push(...addresses)
     }
 
+    const retrievabilityThreshold = parseFloat(process.env.RETRIEVABILITY_WARNING_THRESHOLD ?? '0.2')
+    const retrievabilityRange = parseInt(process.env.RETRIEVABILITY_RANGE_DAYS ?? '7')
+
     const criteria: Criteria[] = JSON.parse(process.env.CRITERIA ?? '[]')
     if (criteria.length === 0 || criteria.some(c =>
       c.lowReplicaThreshold === undefined ||
@@ -110,7 +117,7 @@ const handler: ApplicationFunction = (app: Probot, _options: ApplicationFunction
     if (context.payload.action === 'created' && context.name !== 'issues' && context.name !== 'issue_comment') {
       const pre: PullRequestReviewCommentCreatedEvent = context.payload as PullRequestReviewCommentCreatedEvent
 
-      const result = await checker.checkFromPR(pre, criteria, otherAddresses)
+      const result = await checker.checkFromPR(pre, criteria, otherAddresses, retrievabilityThreshold, retrievabilityRange)
       if (result === undefined) {
         app.log.info('No comment to post')
         return
@@ -127,7 +134,7 @@ const handler: ApplicationFunction = (app: Probot, _options: ApplicationFunction
       return
     }
     const icce: IssueCommentCreatedEvent = context.payload as IssueCommentCreatedEvent
-    const result = await checker.check(icce, criteria, otherAddresses)
+    const result = await checker.check(icce, criteria, otherAddresses, retrievabilityThreshold, retrievabilityRange)
     if (result === undefined) {
       app.log.info('No comment to post')
       return
