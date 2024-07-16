@@ -4,6 +4,7 @@
   "description": "Checker tool for allocator datacap applications",
   "scripts": {
     "build": "tsc",
+    "migrate": "node-pg-migrate",
     "test": "jasmine-ts --config=jasmine.json",
     "dev": "nodemon --exec \"npm start\"",
     "start": "probot run ./dist/src/app.js",
@@ -41,6 +42,7 @@
     "jasmine-reporters": "^2.5.0",
     "jasmine-spec-reporter": "^7.0.0",
     "jasmine-ts": "^0.4.0",
+    "node-pg-migrate": "^7.5.2",
     "nodemon": "^2.0.20",
     "ts-node": "^10.9.1",
     "typescript": "^4.9.3"
