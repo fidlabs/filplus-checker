@@ -22,6 +22,8 @@ exports.up = (pgm) => {
       default: pgm.func("current_timestamp"),
     },
   });
+
+  pgm.createIndex("generated_reports", "client_address_id");
 };
 
 /**
@@ -30,5 +32,6 @@ exports.up = (pgm) => {
  * @returns {Promise<void> | void}
  */
 exports.down = (pgm) => {
+  pgm.dropIndex("generated_reports", "client_address_id");
   pgm.dropTable("generated_reports");
 };
