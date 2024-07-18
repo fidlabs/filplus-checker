@@ -45,7 +45,7 @@ export function parseAllocatorIssue (trimmed) {
       continue
     }
 
-    parsedData[k] = trimmed.match(rg) ? trimmed.match(rg)[0] : null
+    parsedData[k] = trimmed.match(rg) ? trimmed.match(rg)[0].trim() : null
 
     const isCustomRg = /- \[x\] Use Custom Multisig/gi
 
