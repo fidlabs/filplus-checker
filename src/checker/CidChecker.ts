@@ -1,39 +1,40 @@
-import { Issue, Repository, PullRequestReviewCommentCreatedEvent } from '@octokit/webhooks-types'
+import { Octokit } from '@octokit/core'
+import { RestEndpointMethodTypes } from '@octokit/plugin-rest-endpoint-methods'
+import { Issue, PullRequestReviewCommentCreatedEvent, Repository } from '@octokit/webhooks-types'
+import retry from 'async-retry'
+import axios from 'axios'
+import { Chart, LegendOptions } from 'chart.js'
+import { resolve4, resolve6 } from 'dns/promises'
+import * as fs from 'fs'
+import { Multiaddr } from 'multiaddr'
+import emoji from 'node-emoji'
+import ordinal from 'ordinal'
+import { dirname, join as pathJoin } from 'path'
 import { Pool } from 'pg'
+import { Logger } from 'pino'
+import xbytes from 'xbytes'
+import BarChart, { BarChartEntry } from '../charts/BarChart'
+import GeoMap, { GeoMapEntry } from '../charts/GeoMap'
+import { parseIssue } from '../ldn-parser-functions/parseIssue'
+import { isNotEmpty } from '../utils/typeGuards'
+import { escape, generateGfmTable, generateLink, wrapInCode } from './MarkdownUtils'
 import {
   ApplicationInfo,
   CidSharing,
-  ReplicationDistribution,
+  CidSharingRow,
+  GetVerifiedClientResponse,
+  IpInfoResponse,
+  Location,
+  MinerInfo,
   ProviderDistribution,
   ProviderDistributionRow,
-  ReplicationDistributionRow,
-  CidSharingRow,
-  Location,
   ProviderDistributionWithLocation,
-  MinerInfo,
-  IpInfoResponse,
-  GetVerifiedClientResponse,
-  SparkSuccessRate,
-  Retrievability } from './Types'
-import { generateGfmTable, escape, generateLink, wrapInCode } from './MarkdownUtils'
-import * as fs from 'fs'
-import { dirname, join as pathJoin } from 'path'
-import xbytes from 'xbytes'
-import emoji from 'node-emoji'
-import retry from 'async-retry'
-import { Octokit } from '@octokit/core'
-import { RestEndpointMethodTypes } from '@octokit/plugin-rest-endpoint-methods'
-import { Logger } from 'pino'
-import ordinal from 'ordinal'
-import { resolve4, resolve6 } from 'dns/promises'
-import axios from 'axios'
-import { Multiaddr } from 'multiaddr'
-import BarChart, { BarChartEntry } from '../charts/BarChart'
-import GeoMap, { GeoMapEntry } from '../charts/GeoMap'
-import { Chart, LegendOptions } from 'chart.js'
-import { parseIssue } from '../ldn-parser-functions/parseIssue'
+  ReplicationDistribution,
+  ReplicationDistributionRow,
+  Retrievability,
+  SparkSuccessRate
+} from './Types'
 import { DatacapAllocation } from './application'
-import { isNotEmpty } from '../utils/typeGuards'
 
 const RED = 'rgba(255, 99, 132)'
 const GREEN = 'rgba(75, 192, 192)'
@@ -946,6 +947,13 @@ export default class CidChecker {
     pushBoth('')
     const joinedContent = content.join('\n')
     const contentUrl = await this.uploadReport(joinedContent, event)
+    
+    try {
+      await this.sql.query('INSERT INTO generated_reports (client_address_id, file_path) VALUES ($1, $2)', [applicationInfo.clientAddress, contentUrl])
+    } catch(e) {
+      logger.error({ error: e }, 'Failed to insert generated report into database')
+    }
+
     summary.push('### Full report')
     summary.push(`Click ${generateLink('here', contentUrl)} to view the CID Checker report.`)
     return [summary.join('\n'), joinedContent]
