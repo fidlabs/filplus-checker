@@ -3,7 +3,14 @@ import { Logger } from 'pino'
 import CidChecker, { FileUploadConfig } from './checker/CidChecker'
 import { Octokit } from '@octokit/core'
 
-export const pool = new Pool()
+export const pool = new Pool({
+  connectionString:
+    process.env.PG_CONNECTION_STRING_REPLICA
+})
+export const insertPool = new Pool({
+  connectionString: process.env.PG_CONNECTION_STRING_LOCAL
+})
+
 export function getCidChecker (logger: Logger, octo?: Octokit): CidChecker {
   if (process.env.UPLOAD_REPO_OWNER === undefined ||
     process.env.UPLOAD_REPO_NAME === undefined ||
@@ -45,6 +52,7 @@ export function getCidChecker (logger: Logger, octo?: Octokit): CidChecker {
     fileUploadConfig,
     logger,
     process.env.IPINFO_TOKEN,
-    allocationBotId
+    allocationBotId,
+    insertPool
   )
 }
