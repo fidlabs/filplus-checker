@@ -79,7 +79,7 @@ export default class CidChecker {
             SUM("pieceSize") AS total_deal_size,
             MIN("pieceSize") AS piece_size
       FROM dc_allocation_claim
-      WHERE "clientId" = ANY ($1)
+      WHERE 'f0' || "clientId" = ANY ($1)
         AND removed = false
         AND ("termStart" > 0 AND "termStart" < $2)
       GROUP BY provider, "pieceCid"
@@ -104,7 +104,7 @@ export default class CidChecker {
                                MAX("pieceSize")          AS piece_size,
                                "pieceCid" AS piece_cid
                         FROM dc_allocation_claim
-                        WHERE "clientId" = ANY ($1)
+                        WHERE 'f0' || "clientId" = ANY ($1)
                           AND removed = false
                           AND ("termStart" > 0 AND "termStart" < $2)
                         GROUP BY piece_cid)
@@ -191,12 +191,12 @@ export default class CidChecker {
     return result
   }
 
-  private async getStorageProviderDistribution (clientsShortIds: string[]): Promise<ProviderDistribution[]> {
+  private async getStorageProviderDistribution (clientIds: string[]): Promise<ProviderDistribution[]> {
     const currentEpoch = CidChecker.getCurrentEpoch()
-    this.logger.info({ clientsShortIds, currentEpoch }, 'Getting storage provider distribution')
+    this.logger.info({ clientIds, currentEpoch }, 'Getting storage provider distribution')
     const queryResult = await retry(async () => await this.sql.query(
       CidChecker.ProviderDistributionQuery,
-      [clientsShortIds, currentEpoch]), { retries: 3 })
+      [clientIds, currentEpoch]), { retries: 3 })
     const distributions = queryResult.rows as ProviderDistribution[]
     const total = distributions.reduce((acc, cur) => acc + parseFloat(cur.total_deal_size), 0)
     for (const distribution of distributions) {
@@ -206,12 +206,12 @@ export default class CidChecker {
     return distributions
   }
 
-  private async getReplicationDistribution (clientsShortIds: string[]): Promise<ReplicationDistribution[]> {
+  private async getReplicationDistribution (clientIds: string[]): Promise<ReplicationDistribution[]> {
     const currentEpoch = CidChecker.getCurrentEpoch()
-    this.logger.info({ clientsShortIds, currentEpoch }, 'Getting replication distribution')
+    this.logger.info({ clientIds, currentEpoch }, 'Getting replication distribution')
     const queryResult = await retry(async () => await this.sql.query(
       CidChecker.ReplicaDistributionQuery,
-      [clientsShortIds, currentEpoch]), { retries: 3 })
+      [clientIds, currentEpoch]), { retries: 3 })
     const distributions = queryResult.rows as ReplicationDistribution[]
     const total = distributions.reduce((acc, cur) => acc + parseFloat(cur.total_deal_size), 0)
     for (const distribution of distributions) {
@@ -669,7 +669,6 @@ export default class CidChecker {
     if (clientIds == null) {
       return [CidChecker.getErrorContent('No client ID found for this issue.'), undefined]
     }
-    const shortIDs = this.getClientShortIDs(clientIds)
 
     const criteria = criterias.length > allocations - 1 ? criterias[allocations - 1] : criterias[criterias.length - 1]
 
@@ -677,7 +676,7 @@ export default class CidChecker {
     const [providerDistributions, replicationDistributions, cidSharing] =
       await Promise.all([
         (async () => {
-          const result = await this.getStorageProviderDistribution(shortIDs)
+          const result = await this.getStorageProviderDistribution(clientIds)
           const providers = result.map(r => r.provider)
           if (providers.length === 0) {
             return []
@@ -691,7 +690,7 @@ export default class CidChecker {
           }
           return withLocations.sort((a, b) => a.orgName?.localeCompare(b.orgName ?? '') ?? 0)
         })(),
-        this.getReplicationDistribution(shortIDs),
+        this.getReplicationDistribution(clientIds),
         this.getCidSharing(addressGroup)
       ])
 
@@ -1083,9 +1082,5 @@ export default class CidChecker {
       console.error(e)
       return null
     }
-  }
-
-  private getClientShortIDs (clientIds: string[]): string[] {
-    return clientIds.map((id) => id.slice(2))
   }
 }
