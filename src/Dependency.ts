@@ -5,11 +5,9 @@ import { Octokit } from '@octokit/core'
 
 export const pool = new Pool({
   connectionString:
-    'postgresql://user:zaqwsx@localhost:5432/dumpddo'
+    process.env.PG_CONNECTION_STRING
 })
-export const insertPool = new Pool({
-  connectionString: process.env.PG_CONNECTION_STRING_LOCAL
-})
+
 
 export function getCidChecker (logger: Logger, octo?: Octokit): CidChecker {
   if (process.env.UPLOAD_REPO_OWNER === undefined ||
