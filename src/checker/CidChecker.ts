@@ -896,14 +896,6 @@ export default class CidChecker {
     const contentUrl = await this.uploadReport(joinedContent, event)
 
     try {
-      await this.sql.query(`
-          CREATE TABLE IF NOT EXISTS generated_reports (
-              id SERIAL PRIMARY KEY,
-              client_address_id VARCHAR(255) NOT NULL,
-              file_path TEXT NOT NULL,
-              created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-          )
-      `)
       await this.sql.query(
         'INSERT INTO generated_reports (client_address_id, file_path) VALUES ($1, $2)',
         [applicationInfo.clientAddress, contentUrl]
