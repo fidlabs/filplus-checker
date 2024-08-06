@@ -73,73 +73,17 @@ export default class CidChecker {
   //                                                 where client_address = ANY ($1)`
   private static readonly issueApplicationInfoCache: Map<string, ApplicationInfo | null> = new Map()
   private static readonly ProviderDistributionQuery = `
-      WITH miner_pieces AS (
-      SELECT 'f0' || "providerId" AS provider,
-            "pieceCid",
-            SUM("pieceSize") AS total_deal_size,
-            MIN("pieceSize") AS piece_size
-      FROM dc_allocation_claim
-      WHERE 'f0' || "clientId" = ANY ($1)
-        AND removed = false
-        AND ("termStart" > 0 AND "termStart" < $2)
-      GROUP BY provider, "pieceCid"
-  ),
-  miners AS (
-      SELECT provider,
-            SUM(total_deal_size) AS total_deal_size,
-            SUM(piece_size)      AS unique_data_size
-      FROM miner_pieces
-      GROUP BY provider
-  )
-  SELECT miners.provider,
+   SELECT provider,
         total_deal_size,
         unique_data_size,
         (total_deal_size::FLOAT - unique_data_size) / total_deal_size::FLOAT AS duplication_percentage
-  FROM miners
+  FROM provider_distribution
+  WHERE client = ANY ($1)
   ORDER BY total_deal_size DESC;`
 
-  private static readonly ReplicaDistributionQuery = `
-      WITH replicas AS (SELECT COUNT(DISTINCT "providerId") AS num_of_replicas,
-                               SUM("pieceSize")          AS total_deal_size,
-                               MAX("pieceSize")          AS piece_size,
-                               "pieceCid" AS piece_cid
-                        FROM dc_allocation_claim
-                        WHERE 'f0' || "clientId" = ANY ($1)
-                          AND removed = false
-                          AND ("termStart" > 0 AND "termStart" < $2)
-                        GROUP BY piece_cid)
-      SELECT SUM(total_deal_size) AS total_deal_size,
-             SUM(piece_size)      AS unique_data_size,
-             num_of_replicas::INT
-      FROM replicas
-      GROUP BY num_of_replicas
-      ORDER BY num_of_replicas ASC`
+  private static readonly ReplicaDistributionQuery = 'SELECT * FROM replica_distribution where client = ANY ($1)'
 
-  private static readonly CidSharingQuery = `
-      WITH cids AS (
-          SELECT DISTINCT "pieceCid"
-          FROM dc_allocation_claim
-          WHERE "pieceCid" IN (
-              SELECT "pieceCid"
-              FROM dc_allocation_claim dc
-              JOIN verified_client vc ON 'f0' || dc."clientId" = vc."addressId"
-              WHERE dc.removed = false
-              AND vc.address = ANY ($1)
-          )
-      )
-      SELECT 
-          SUM(dc."pieceSize") AS total_deal_size,
-          COUNT(DISTINCT dc."pieceCid")::INT AS unique_cid_count, 
-          vc.address as other_client_address
-      FROM 
-          cids c
-          JOIN dc_allocation_claim dc ON c."pieceCid" = dc."pieceCid"
-          JOIN verified_client vc ON 'f0' || dc."clientId" = vc."addressId"
-      WHERE 
-          vc.address != ANY ($1)
-      GROUP BY vc.address
-      ORDER BY total_deal_size DESC;
-      `
+  private static readonly CidSharingQuery = 'SELECT * FROM cid_sharing WHERE client = ANY ($1)'
 
   public constructor (
     private readonly sql: Pool,
@@ -147,8 +91,7 @@ export default class CidChecker {
     private readonly fileUploadConfig: FileUploadConfig,
     private readonly logger: Logger,
     private readonly ipinfoToken: string,
-    private readonly allocationBotId: number,
-    private readonly insertPool: Pool) {
+    private readonly allocationBotId: number) {
   }
 
   private getClientAddress (issue: Issue): string | undefined {
@@ -170,33 +113,24 @@ export default class CidChecker {
   //  return result.rows.map((row: any) => row.client)
   // }
 
-  private async getFirstClientByProviders (providers: string[]): Promise<Map<string, string>> {
+  private async getFirstClientByProviders (providers: string[]): Promise<Array<{ provider: string, first_client: string }>> {
     const params = []
     for (let i = 1; i <= providers.length; i++) {
       params.push('$' + i.toString())
     }
     const firstClientQuery = `
-      WITH mapping AS (SELECT DISTINCT ON ("providerId") "providerId" provider, "clientId" 
-      FROM dc_allocation_claim WHERE removed = false AND "termStart" > 0 AND 'f0' || "providerId" 
-      IN (${params.join(', ')}) ORDER BY "providerId", "termStart" ASC) 
-      SELECT 'f0' || provider AS provider, address FROM mapping, verified_client 
-      WHERE 'f0' || mapping."clientId" = verified_client."addressId"`
+      SELECT * FROM providers WHERE provider IN (${params.join(',')})`
     this.logger.info({ firstClientQuery, providers })
     const queryResult = await retry(async () => await this.sql.query(firstClientQuery, providers), { retries: 3 })
-    const rows: Array<{ provider: string, client_address: string }> = queryResult.rows
-    const result = new Map<string, string>()
-    for (const row of rows) {
-      result.set(row.provider, row.client_address)
-    }
-    return result
+    const rows: Array<{ provider: string, first_client: string }> = queryResult.rows
+    return rows
   }
 
   private async getStorageProviderDistribution (clientIds: string[]): Promise<ProviderDistribution[]> {
-    const currentEpoch = CidChecker.getCurrentEpoch()
-    this.logger.info({ clientIds, currentEpoch }, 'Getting storage provider distribution')
+    this.logger.info({ clientIds }, 'Getting storage provider distribution')
     const queryResult = await retry(async () => await this.sql.query(
       CidChecker.ProviderDistributionQuery,
-      [clientIds, currentEpoch]), { retries: 3 })
+      [clientIds]), { retries: 3 })
     const distributions = queryResult.rows as ProviderDistribution[]
     const total = distributions.reduce((acc, cur) => acc + parseFloat(cur.total_deal_size), 0)
     for (const distribution of distributions) {
@@ -211,7 +145,7 @@ export default class CidChecker {
     this.logger.info({ clientIds, currentEpoch }, 'Getting replication distribution')
     const queryResult = await retry(async () => await this.sql.query(
       CidChecker.ReplicaDistributionQuery,
-      [clientIds, currentEpoch]), { retries: 3 })
+      [clientIds]), { retries: 3 })
     const distributions = queryResult.rows as ReplicationDistribution[]
     const total = distributions.reduce((acc, cur) => acc + parseFloat(cur.total_deal_size), 0)
     for (const distribution of distributions) {
@@ -221,11 +155,11 @@ export default class CidChecker {
     return distributions
   }
 
-  private async getCidSharing (clients: string[]): Promise<CidSharing[]> {
-    this.logger.info({ clients }, 'Getting cid sharing')
+  private async getCidSharing (clientIds: string[]): Promise<CidSharing[]> {
+    this.logger.info({ clientIds }, 'Getting cid sharing')
     const queryResult = await retry(async () => await this.sql.query(
       CidChecker.CidSharingQuery,
-      [clients]), { retries: 3 })
+      [clientIds]), { retries: 3 })
     const sharing = queryResult.rows as CidSharing[]
     this.logger.debug({ sharing }, 'Got cid sharing')
     return sharing
@@ -685,13 +619,13 @@ export default class CidChecker {
           const withLocations: ProviderDistributionWithLocation[] = []
           for (const item of result) {
             const location = await this.getLocation(item.provider)
-            const isNew = addressGroup.includes(firstClientByProvider.get(item.provider) ?? '')
+            const isNew = clientIds.includes(firstClientByProvider.find((row) => row.provider === item.provider)?.first_client ?? '')
             withLocations.push({ ...item, ...location, new: isNew })
           }
           return withLocations.sort((a, b) => a.orgName?.localeCompare(b.orgName ?? '') ?? 0)
         })(),
         this.getReplicationDistribution(clientIds),
-        this.getCidSharing(addressGroup)
+        this.getCidSharing(clientIds)
       ])
 
     const { retrievability, avgProviderScore } = await this.providersRetrievability(providerDistributions, retrievabilityRange)
@@ -738,9 +672,9 @@ export default class CidChecker {
       cidSharing.map(
         async (share) => {
           const totalDealSize = xbytes(parseFloat(share.total_deal_size), { iec: true })
-          const otherApplication = await this.findApplicationInfoForClient(share.other_client_address)
+          const otherApplication = await this.findApplicationInfoForClient(share.other_client)
           return {
-            otherClientAddress: CidChecker.linkifyAddress(share.other_client_address),
+            otherClientAddress: CidChecker.linkifyAddress(share.other_client),
             totalDealSize,
             uniqueCidCount: share.unique_cid_count.toLocaleString('en-US'),
             otherClientOrganizationName: CidChecker.linkifyApplicationInfo(otherApplication),
@@ -962,7 +896,7 @@ export default class CidChecker {
     const contentUrl = await this.uploadReport(joinedContent, event)
 
     try {
-      await this.insertPool.query(`
+      await this.sql.query(`
           CREATE TABLE IF NOT EXISTS generated_reports (
               id SERIAL PRIMARY KEY,
               client_address_id VARCHAR(255) NOT NULL,
@@ -970,7 +904,7 @@ export default class CidChecker {
               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
           )
       `)
-      await this.insertPool.query(
+      await this.sql.query(
         'INSERT INTO generated_reports (client_address_id, file_path) VALUES ($1, $2)',
         [applicationInfo.clientAddress, contentUrl]
       )
