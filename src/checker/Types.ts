@@ -90,7 +90,7 @@ export interface ReplicationDistributionRow {
 export interface CidSharing {
   total_deal_size: string
   unique_cid_count: number
-  other_client_address: string
+  other_client: string
 }
 
 export interface CidSharingRow {

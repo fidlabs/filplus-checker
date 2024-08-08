@@ -73,70 +73,17 @@ export default class CidChecker {
   //                                                 where client_address = ANY ($1)`
   private static readonly issueApplicationInfoCache: Map<string, ApplicationInfo | null> = new Map()
   private static readonly ProviderDistributionQuery = `
-      WITH miner_pieces AS (SELECT provider,
-                                   piece_cid,
-                                   SUM(piece_size) AS total_deal_size,
-                                   MIN(piece_size) AS piece_size
-                            FROM current_state,
-                                 client_mapping
-                            WHERE client_address = ANY ($1)
-                              AND current_state.client = client_mapping.client
-                              AND verified_deal = true
-                              AND slash_epoch < 0
-                              AND (sector_start_epoch > 0 AND sector_start_epoch < $2)
-                              AND end_epoch > $2
-                            GROUP BY provider, piece_cid),
-           miners AS (SELECT provider,
-                             SUM(total_deal_size) AS total_deal_size,
-                             SUM(piece_size)      AS unique_data_size
-                      FROM miner_pieces
-                      GROUP BY provider)
-      SELECT miners.provider,
-             total_deal_size,
-             unique_data_size,
-             (total_deal_size::FLOAT - unique_data_size) / total_deal_size::FLOAT AS duplication_percentage
-      FROM miners
-      ORDER BY total_deal_size DESC`
+   SELECT provider,
+        total_deal_size,
+        unique_data_size,
+        (total_deal_size::FLOAT - unique_data_size) / total_deal_size::FLOAT AS duplication_percentage
+  FROM provider_distribution
+  WHERE client = ANY ($1)
+  ORDER BY total_deal_size DESC;`
 
-  private static readonly ReplicaDistributionQuery = `
-      WITH replicas AS (SELECT COUNT(DISTINCT provider) AS num_of_replicas,
-                               SUM(piece_size)          AS total_deal_size,
-                               MAX(piece_size)          AS piece_size,
-                               piece_cid
-                        FROM current_state,
-                             client_mapping
-                        WHERE client_address = ANY ($1)
-                          AND current_state.client = client_mapping.client
-                          AND verified_deal = true
-                          AND slash_epoch < 0
-                          AND (sector_start_epoch > 0 AND sector_start_epoch < $2)
-                          AND end_epoch > $2
-                        GROUP BY piece_cid)
-      SELECT SUM(total_deal_size) AS total_deal_size,
-             SUM(piece_size)      AS unique_data_size,
-             num_of_replicas::INT
-      FROM replicas
-      GROUP BY num_of_replicas
-      ORDER BY num_of_replicas ASC`
+  private static readonly ReplicaDistributionQuery = 'SELECT * FROM replica_distribution where client = ANY ($1)'
 
-  private static readonly CidSharingQuery = `
-      WITH cids AS (SELECT DISTINCT piece_cid
-                    FROM current_state,
-                         client_mapping
-                    WHERE client_address = ANY ($1)
-                      AND current_state.client = client_mapping.client
-                      AND current_state.verified_deal = true
-                      AND verified_deal = true)
-      SELECT SUM(piece_size) AS total_deal_size,
-             COUNT(DISTINCT current_state.piece_cid)::INT AS unique_cid_count, client_address as other_client_address
-      FROM cids,
-           current_state,
-           client_mapping
-      WHERE cids.piece_cid = current_state.piece_cid
-        AND current_state.client = client_mapping.client
-        AND NOT (client_address = ANY ($1))
-      GROUP BY client_address
-      ORDER BY total_deal_size DESC`
+  private static readonly CidSharingQuery = 'SELECT * FROM cid_sharing WHERE client = ANY ($1)'
 
   public constructor (
     private readonly sql: Pool,
@@ -166,29 +113,24 @@ export default class CidChecker {
   //  return result.rows.map((row: any) => row.client)
   // }
 
-  private async getFirstClientByProviders (providers: string[]): Promise<Map<string, string>> {
+  private async getFirstClientByProviders (providers: string[]): Promise<Array<{ provider: string, first_client: string }>> {
     const params = []
     for (let i = 1; i <= providers.length; i++) {
       params.push('$' + i.toString())
     }
-    const firstClientQuery = 'WITH mapping AS (SELECT DISTINCT ON (provider) provider, client FROM current_state WHERE verified_deal = true AND sector_start_epoch > 0 AND provider IN (' +
-      params.join(', ') + ') ORDER BY provider, sector_start_epoch ASC) SELECT provider, client_address FROM mapping, client_mapping WHERE mapping.client = client_mapping.client'
+    const firstClientQuery = `
+      SELECT * FROM providers WHERE provider IN (${params.join(',')})`
     this.logger.info({ firstClientQuery, providers })
     const queryResult = await retry(async () => await this.sql.query(firstClientQuery, providers), { retries: 3 })
-    const rows: Array<{ provider: string, client_address: string }> = queryResult.rows
-    const result = new Map<string, string>()
-    for (const row of rows) {
-      result.set(row.provider, row.client_address)
-    }
-    return result
+    const rows: Array<{ provider: string, first_client: string }> = queryResult.rows
+    return rows
   }
 
-  private async getStorageProviderDistribution (clients: string[]): Promise<ProviderDistribution[]> {
-    const currentEpoch = CidChecker.getCurrentEpoch()
-    this.logger.info({ clients, currentEpoch }, 'Getting storage provider distribution')
+  private async getStorageProviderDistribution (clientIds: string[]): Promise<ProviderDistribution[]> {
+    this.logger.info({ clientIds }, 'Getting storage provider distribution')
     const queryResult = await retry(async () => await this.sql.query(
       CidChecker.ProviderDistributionQuery,
-      [clients, currentEpoch]), { retries: 3 })
+      [clientIds]), { retries: 3 })
     const distributions = queryResult.rows as ProviderDistribution[]
     const total = distributions.reduce((acc, cur) => acc + parseFloat(cur.total_deal_size), 0)
     for (const distribution of distributions) {
@@ -198,12 +140,12 @@ export default class CidChecker {
     return distributions
   }
 
-  private async getReplicationDistribution (clients: string[]): Promise<ReplicationDistribution[]> {
+  private async getReplicationDistribution (clientIds: string[]): Promise<ReplicationDistribution[]> {
     const currentEpoch = CidChecker.getCurrentEpoch()
-    this.logger.info({ clients, currentEpoch }, 'Getting replication distribution')
+    this.logger.info({ clientIds, currentEpoch }, 'Getting replication distribution')
     const queryResult = await retry(async () => await this.sql.query(
       CidChecker.ReplicaDistributionQuery,
-      [clients, currentEpoch]), { retries: 3 })
+      [clientIds]), { retries: 3 })
     const distributions = queryResult.rows as ReplicationDistribution[]
     const total = distributions.reduce((acc, cur) => acc + parseFloat(cur.total_deal_size), 0)
     for (const distribution of distributions) {
@@ -213,11 +155,11 @@ export default class CidChecker {
     return distributions
   }
 
-  private async getCidSharing (clients: string[]): Promise<CidSharing[]> {
-    this.logger.info({ clients }, 'Getting cid sharing')
+  private async getCidSharing (clientIds: string[]): Promise<CidSharing[]> {
+    this.logger.info({ clientIds }, 'Getting cid sharing')
     const queryResult = await retry(async () => await this.sql.query(
       CidChecker.CidSharingQuery,
-      [clients]), { retries: 3 })
+      [clientIds]), { retries: 3 })
     const sharing = queryResult.rows as CidSharing[]
     this.logger.debug({ sharing }, 'Got cid sharing')
     return sharing
@@ -656,14 +598,19 @@ export default class CidChecker {
       addressGroup.push(applicationInfo.clientAddress)
     }
     logger.info({ groups: addressGroup }, 'Retrieved address groups')
+
+    const clientIds = await this.getClientAddressId(addressGroup)
+    if (clientIds == null) {
+      return [CidChecker.getErrorContent('No client ID found for this issue.'), undefined]
+    }
+
     const criteria = criterias.length > allocations - 1 ? criterias[allocations - 1] : criterias[criterias.length - 1]
 
     // const shortIDs = await this.getClientShortIDs(addressGroup)
-
     const [providerDistributions, replicationDistributions, cidSharing] =
       await Promise.all([
         (async () => {
-          const result = await this.getStorageProviderDistribution(addressGroup)
+          const result = await this.getStorageProviderDistribution(clientIds)
           const providers = result.map(r => r.provider)
           if (providers.length === 0) {
             return []
@@ -672,13 +619,13 @@ export default class CidChecker {
           const withLocations: ProviderDistributionWithLocation[] = []
           for (const item of result) {
             const location = await this.getLocation(item.provider)
-            const isNew = addressGroup.includes(firstClientByProvider.get(item.provider) ?? '')
+            const isNew = clientIds.includes(firstClientByProvider.find((row) => row.provider === item.provider)?.first_client ?? '')
             withLocations.push({ ...item, ...location, new: isNew })
           }
           return withLocations.sort((a, b) => a.orgName?.localeCompare(b.orgName ?? '') ?? 0)
         })(),
-        this.getReplicationDistribution(addressGroup),
-        this.getCidSharing(addressGroup)
+        this.getReplicationDistribution(clientIds),
+        this.getCidSharing(clientIds)
       ])
 
     const { retrievability, avgProviderScore } = await this.providersRetrievability(providerDistributions, retrievabilityRange)
@@ -725,9 +672,9 @@ export default class CidChecker {
       cidSharing.map(
         async (share) => {
           const totalDealSize = xbytes(parseFloat(share.total_deal_size), { iec: true })
-          const otherApplication = await this.findApplicationInfoForClient(share.other_client_address)
+          const otherApplication = await this.findApplicationInfoForClient(share.other_client)
           return {
-            otherClientAddress: CidChecker.linkifyAddress(share.other_client_address),
+            otherClientAddress: CidChecker.linkifyAddress(share.other_client),
             totalDealSize,
             uniqueCidCount: share.unique_cid_count.toLocaleString('en-US'),
             otherClientOrganizationName: CidChecker.linkifyApplicationInfo(otherApplication),
@@ -858,7 +805,7 @@ export default class CidChecker {
       pushBoth('')
     }
 
-    if (retrievability.length && avgProviderScore < retrievabilityThreshold) {
+    if ((retrievability.length > 0) && avgProviderScore < retrievabilityThreshold) {
       pushBoth(emoji.get('warning') + ` The average retrieval success rate is ${(avgProviderScore * 100).toFixed(2)}%`)
       pushBoth('')
     }
@@ -947,10 +894,13 @@ export default class CidChecker {
     pushBoth('')
     const joinedContent = content.join('\n')
     const contentUrl = await this.uploadReport(joinedContent, event)
-    
+
     try {
-      await this.sql.query('INSERT INTO generated_reports (client_address_id, file_path) VALUES ($1, $2)', [applicationInfo.clientAddress, contentUrl])
-    } catch(e) {
+      await this.sql.query(
+        'INSERT INTO generated_reports (client_address_id, file_path) VALUES ($1, $2)',
+        [applicationInfo.clientAddress, contentUrl]
+      )
+    } catch (e) {
       logger.error({ error: e }, 'Failed to insert generated report into database')
     }
 
@@ -959,7 +909,7 @@ export default class CidChecker {
     return [summary.join('\n'), joinedContent]
   }
 
-  private async providersRetrievability(
+  private async providersRetrievability (
     providerDistributions: ProviderDistributionWithLocation[],
     retrievabilityRange: number
   ): Promise<{ retrievability: Retrievability[], avgProviderScore: number }> {
@@ -1003,7 +953,7 @@ export default class CidChecker {
       .map(({ provider, total_deal_size }) => {
         const sparkItem = sparkData.find((x) => x.miner_id === provider)
 
-        if (!sparkItem) return null
+        if (sparkItem == null) return null
 
         return {
           provider_id: sparkItem.miner_id,
@@ -1031,5 +981,32 @@ export default class CidChecker {
       `Upload report for issue #${issue.number} of ${repository.full_name}`)
     logger.info({ contentUrl: contentUrl[1] }, 'Report content uploaded')
     return contentUrl[1]
+  }
+
+  private async getClientAddressId (clientAddress: string[]): Promise<string[] | null> {
+    try {
+      const clientIds: string[] = []
+      for (const address of clientAddress) {
+        await retry(async () => {
+          const response = await axios.post('https://api.node.glif.io/rpc/v0', {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'Filecoin.StateLookupID',
+            params: [
+              address, null
+            ]
+          })
+          const result = response.data.result
+          if (result === undefined) {
+            throw new Error('Invalid glif response while getting client id')
+          }
+          clientIds.push(result)
+        }, { retries: 3 })
+      }
+      return clientIds
+    } catch (e) {
+      console.error(e)
+      return null
+    }
   }
 }
