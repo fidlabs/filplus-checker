@@ -858,7 +858,13 @@ export default class CidChecker {
       pushBoth('')
     }
 
-    if (retrievability.length && avgProviderScore < retrievabilityThreshold) {
+    const retrievabilityThreeQuart = retrievability.filter((item) => item.success_rate < 0.75).length
+    if ((retrievability.length > 0) && retrievabilityThreeQuart > 0) {
+      const warningThreeQuart = (retrievabilityThreeQuart / retrievability.length) * 100
+      summary.push(emoji.get('warning') + ` ${warningThreeQuart.toFixed(2)}% of Storage Providers have retrieval success rate less than 75%.`)
+    }
+
+    if ((retrievability.length > 0) && avgProviderScore < retrievabilityThreshold) {
       pushBoth(emoji.get('warning') + ` The average retrieval success rate is ${(avgProviderScore * 100).toFixed(2)}%`)
       pushBoth('')
     }
