@@ -85,6 +85,24 @@ const handler: ApplicationFunction = (app: Probot, _options: ApplicationFunction
         res.contentType('text/plain').send(result[0] + result[1])
       }
     })
+
+    reportRoute.get('/latest', async (req: Request, res: Response) => {
+      if (req.query.clientAddress === undefined) {
+        res.status(400).send('Missing Client Address')
+        return
+      }
+
+      const checker = getCidChecker(app.log.child({ contextId: req.id }))
+
+      const result = await checker.getLatestClientGeneratedReport(req.query.clientAddress as string)
+      if (result === undefined) {
+        app.log.info('No existing report found')
+        res.status(404).send()
+        return
+      }
+
+      res.contentType('text/plain').send(result)
+    })
   }
 
   app.on(['issues.labeled', 'issue_comment.created', 'pull_request_review_comment.created'], async (context) => {
