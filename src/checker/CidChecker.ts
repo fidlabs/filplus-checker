@@ -808,7 +808,8 @@ export default class CidChecker {
     const retrievabilityThreeQuart = retrievability.filter((item) => item.success_rate < 0.75).length
     if ((retrievability.length > 0) && retrievabilityThreeQuart > 0) {
       const warningThreeQuart = (retrievabilityThreeQuart / retrievability.length) * 100
-      summary.push(emoji.get('warning') + ` ${warningThreeQuart.toFixed(2)}% of Storage Providers have retrieval success rate less than 75%.`)
+      pushBoth(emoji.get('warning') + ` ${warningThreeQuart.toFixed(2)}% of Storage Providers have retrieval success rate less than 75%.`)
+      pushBoth('')
     }
 
     if ((retrievability.length > 0) && avgProviderScore < retrievabilityThreshold) {
