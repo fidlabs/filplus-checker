@@ -92,7 +92,7 @@ export default class CidChecker {
     private readonly fileUploadConfig: FileUploadConfig,
     private readonly logger: Logger,
     private readonly ipinfoToken: string,
-    private readonly allocationBotId: number) {
+  ) {
   }
 
   private getClientAddress (issue: Issue): string | undefined {
@@ -300,7 +300,8 @@ export default class CidChecker {
       organizationName: (primary.name ?? '') + (primary.orgName ?? ''),
       url: primary.allowanceArray[0]?.auditTrail,
       verifier: primary.verifierName,
-      issueNumber: primary.allowanceArray[0]?.auditTrail?.split('/').pop()
+      issueNumber: primary.allowanceArray[0]?.auditTrail?.split('/').pop(),
+      numberOfAllocations: primary.allowanceArray.length
     }
     CidChecker.issueApplicationInfoCache.set(client, result)
     return result
@@ -317,11 +318,6 @@ export default class CidChecker {
           ? `[${escape(applicationInfo.organizationName)}](${applicationInfo.url})`
           : wrapInCode(applicationInfo.organizationName))
       : 'Unknown'
-  }
-
-  private async getNumberOfAllocations (issue: Issue, repo: Repository): Promise<number> {
-    const comments = await this.getComments(issue.number, repo)
-    return comments.filter((comment) => comment.performed_via_github_app?.id === this.allocationBotId && comment.body?.includes('## DataCap Allocation requested')).length
   }
 
   private async getIpFromMultiaddr (multiAddr: string): Promise<string[]> {
@@ -577,12 +573,6 @@ export default class CidChecker {
     const { issue, repository } = event
     let logger = this.logger.child({ issueNumber: issue.number })
     logger.info('Checking issue')
-    const allocations = await this.getNumberOfAllocations(issue, repository)
-    const isEarlyAllocation = criterias.length > allocations
-    logger.info({ allocations }, 'Retrieved number of previous allocations')
-    if (allocations === 0) {
-      return [CidChecker.getErrorContent('There is no previous allocation for this issue.'), undefined]
-    }
     const address = this.getClientAddress(issue)
     if (address == null) {
       return [CidChecker.getErrorContent('No client address found for this issue.'), undefined]
@@ -593,6 +583,11 @@ export default class CidChecker {
     }
     logger = logger.child({ clientAddress: applicationInfo.clientAddress })
     logger.info(applicationInfo, 'Retrieved application info')
+    const allocations = applicationInfo.numberOfAllocations;
+    const isEarlyAllocation = criterias.length > allocations
+    if (allocations === 0) {
+      return [CidChecker.getErrorContent('There is no previous allocation for this issue.'), undefined]
+    }
 
     const addressGroup = otherAddresses
     if (!addressGroup.includes(applicationInfo.clientAddress)) {

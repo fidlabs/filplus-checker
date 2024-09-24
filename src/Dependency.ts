@@ -19,11 +19,6 @@ export function getCidChecker (logger: Logger, octo?: Octokit): CidChecker {
     throw new Error('IPINFO_TOKEN, UPLOAD_TOKEN, UPLOAD_REPO_OWNER, UPLOAD_REPO_NAME, UPLOAD_REPO_COMMITTER_NAME, UPLOAD_REPO_COMMITTER_EMAIL must be defined')
   }
 
-  const allocationBotId = parseInt(process.env.ALLOCATION_BOT_ID ?? '0')
-  if (allocationBotId <= 0 || isNaN(allocationBotId)) {
-    throw new Error('ALLOCATION_BOT_ID must be defined')
-  }
-
   const fileUploadConfig: FileUploadConfig = {
     local: process.env.UPLOAD_DIR,
     localBaseURL: process.env.UPLOAD_BASE_URL || '',
@@ -49,7 +44,6 @@ export function getCidChecker (logger: Logger, octo?: Octokit): CidChecker {
     octo,
     fileUploadConfig,
     logger,
-    process.env.IPINFO_TOKEN,
-    allocationBotId
+    process.env.IPINFO_TOKEN
   )
 }

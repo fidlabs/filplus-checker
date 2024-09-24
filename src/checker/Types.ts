@@ -107,6 +107,7 @@ export interface ApplicationInfo {
   verifier: string
   url: string
   issueNumber: string | undefined
+  numberOfAllocations: number
 }
 
 export interface GetVerifiedClientResponse {
