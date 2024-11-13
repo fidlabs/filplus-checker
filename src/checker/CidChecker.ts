@@ -701,7 +701,8 @@ export default class CidChecker {
       content.push(str)
       summary.push(str)
     }
-    content.push('## DataCap and CID Checker Report[^1]')
+    const now = new Date();
+    content.push(`## DataCap and CID Checker Report[^1] (${now.toISOString().replace('T', ' ')})`)
     summary.push('## DataCap and CID Checker Report Summary[^1]')
     content.push(` - Allocator: ${wrapInCode(applicationInfo.verifier)}`)
     content.push(` - Organization: ${wrapInCode(applicationInfo.organizationName)}`)
