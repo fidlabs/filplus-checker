@@ -60,7 +60,7 @@ export default class CidChecker {
   private static readonly ErrorTemplate = `
   ## DataCap and CID Checker Report[^1]
   {message}
-  
+
   [^1]: To manually trigger this report, add a comment with text \`checker:manualTrigger\`
   `
 
@@ -693,6 +693,7 @@ export default class CidChecker {
       `${repository.full_name}/issues/${issue.number}/${Date.now()}.png`,
       replicationDistributionImage,
       `Upload replication distribution image for issue #${issue.number} of ${repository.full_name}`))[0]
+    const clientId = (await this.getClientAddressId([applicationInfo.clientAddress])) ?? ['N/A']
 
     const content: string[] = []
     const summary: string[] = []
@@ -702,8 +703,11 @@ export default class CidChecker {
     }
     content.push('## DataCap and CID Checker Report[^1]')
     summary.push('## DataCap and CID Checker Report Summary[^1]')
+    content.push(` - Allocator: ${wrapInCode(applicationInfo.verifier)}`)
     content.push(` - Organization: ${wrapInCode(applicationInfo.organizationName)}`)
     content.push(` - Client: ${wrapInCode(applicationInfo.clientAddress)}`)
+    content.push(` - Client ID: ${wrapInCode(clientId[0] ?? 'N/A')}`)
+    content.push(` - Github Issue: [#${applicationInfo.issueNumber ?? 'N/A'}](${applicationInfo.url})`)
     content.push('### Approvers')
     content.push(CidChecker.renderApprovers(await this.getApprovers(issue.number, repository)))
     content.push('')
