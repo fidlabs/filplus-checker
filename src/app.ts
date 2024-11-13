@@ -86,6 +86,23 @@ const handler: ApplicationFunction = (app: Probot, _options: ApplicationFunction
       }
     })
 
+    reportRoute.get('/all', async (req: Request, res: Response) => {
+      if (req.query.clientAddress === undefined) {
+        res.status(400).send('Missing Client Address')
+        return
+      }
+
+      const checker = getCidChecker(app.log.child({ contextId: req.id }))
+
+      const result = await checker.getAllClientGeneratedReports(req.query.clientAddress as string)
+      if (result === undefined) {
+        res.send([])
+        return
+      }
+
+      res.send(result)
+    })
+
     reportRoute.get('/latest', async (req: Request, res: Response) => {
       if (req.query.clientAddress === undefined) {
         res.status(400).send('Missing Client Address')

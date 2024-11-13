@@ -83,6 +83,7 @@ export default class CidChecker {
 
   private static readonly ReplicaDistributionQuery = 'SELECT * FROM replica_distribution where client = ANY ($1)'
   private static readonly LatestGeneratedReportQuery = 'select * from generated_reports where client_address_id = ($1) order by created_at desc limit 1'
+  private static readonly AllGeneratedReportsQuery = 'select * from generated_reports where client_address_id = ($1) order by created_at desc'
 
   private static readonly CidSharingQuery = 'SELECT * FROM cid_sharing WHERE client = ANY ($1)'
 
@@ -915,6 +916,19 @@ export default class CidChecker {
     summary.push('### Full report')
     summary.push(`Click ${generateLink('here', contentUrl)} to view the CID Checker report.`)
     return [summary.join('\n'), joinedContent]
+  }
+
+  public async getAllClientGeneratedReports (address: string){
+    const applicationInfo = await this.findApplicationInfoForClient(address)
+    if (applicationInfo == null) {
+      return [CidChecker.getErrorContent('No application info found for this issue on https://datacapstats.io/clients.'), undefined]
+    }
+
+    const queryResult = await this.sql.query(
+      CidChecker.AllGeneratedReportsQuery,
+      [applicationInfo.clientAddress]);
+
+    return queryResult.rows
   }
 
   public async getLatestClientGeneratedReport (address: string){
